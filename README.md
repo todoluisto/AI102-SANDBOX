@@ -6,9 +6,44 @@ Baseline for securely provisioning and calling Azure AI services — built as a 
 
 ## Architecture
 
-<!-- TODO: Add architecture diagram (Saturday) -->
+```mermaid
+graph LR
+    subgraph Client
+        SDK["Python SDK<br/>(azure.ai.textanalytics)"]
+        REST["REST Client<br/>(curl / HTTP)"]
+    end
 
-*Placeholder — architecture diagram coming soon.*
+    subgraph "ai102-rsg-eus (Resource Group)"
+        COG["ai102-cog-eus<br/>AI Services · S0<br/>(Language, Vision,<br/>Speech, Decision)"]
+        KV["ai102-kvt-eus<br/>Key Vault · Standard"]
+        STG["ai102stgeus<br/>Storage · LRS Hot"]
+        LAW["ai102-law-eus<br/>Log Analytics<br/>(30-day retention)"]
+    end
+
+    %% Auth Path A — API Key (Week 1)
+    SDK == "API Key auth<br/>(AzureKeyCredential)" ==> COG
+    REST == "Ocp-Apim-Subscription-Key<br/>header" ==> COG
+
+    %% Auth Path B — Entra ID (production)
+    SDK -. "Entra ID auth<br/>(DefaultAzureCredential)" .-> COG
+    REST -. "Bearer token<br/>(Entra ID)" .-> COG
+
+    %% Key Vault secret retrieval (Week 1)
+    SDK -- "SecretClient /<br/>Key Vault API" --> KV
+    KV -- "Returns API key<br/>at runtime" --> SDK
+
+    %% Diagnostic log flow (Week 1)
+    COG -- "Audit + RequestResponse<br/>+ Trace logs" --> LAW
+
+    %% Storage (Weeks 3-4)
+    COG -. "Reads blobs<br/>(Week 3 — Vision,<br/>Week 4 — Doc Intelligence)" .-> STG
+```
+
+| Line style | Meaning |
+|---|---|
+| **Thick solid** (`═══`) | API Key auth — active in Week 1 |
+| **Solid** (`───`) | Key Vault retrieval + diagnostic logs — active in Week 1 |
+| **Dashed** (`╌╌╌`) | Entra ID auth (production path) and Storage (Weeks 3–4) |
 
 ## Setup
 
