@@ -28,6 +28,7 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from tabulate import tabulate
 
+from .gap_analyzer import GapAnalysisResult, analyze_gap
 from .job_analyzer import ClassificationResult, classify
 from .job_fetcher import JobSearchFilters, fetch_jobs
 from .resume_parser import ResumeProfile, parse_resume
@@ -91,6 +92,37 @@ def score_job(
         fallback_deployment=deployment_name,
         use_identity=use_identity,
     )
+
+
+def score_job_with_gap(
+    resume_profile: ResumeProfile,
+    job_description: str,
+    secrets: dict[str, str],
+    deployment_name: str = "gpt-4o-mini",
+    use_identity: bool = False,
+) -> tuple[ClassificationResult, GapAnalysisResult]:
+    """Classify a job and perform gap analysis.
+
+    Returns:
+        Tuple of (ClassificationResult, GapAnalysisResult).
+    """
+    classification = score_job(
+        resume_profile, job_description, secrets, deployment_name, use_identity
+    )
+
+    gap = analyze_gap(
+        resume_profile_text=resume_profile.to_prompt_text(),
+        job_description=job_description,
+        primary_endpoint=secrets["openai-endpoint"],
+        primary_key=secrets.get("openai-key"),
+        primary_deployment=deployment_name,
+        fallback_endpoint=secrets.get("openai-fallback-endpoint"),
+        fallback_key=secrets.get("openai-fallback-key"),
+        fallback_deployment=deployment_name,
+        use_identity=use_identity,
+    )
+
+    return classification, gap
 
 
 def _load_job_files(jobs_dir: str) -> list[tuple[str, str]]:

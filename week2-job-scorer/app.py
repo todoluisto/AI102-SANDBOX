@@ -15,11 +15,12 @@ from pathlib import Path
 
 import streamlit as st
 
+from src.gap_analyzer import GapAnalysisResult
 from src.job_analyzer import ClassificationResult
 from src.job_fetcher import JobSearchFilters, fetch_jobs
 from src.job_scraper import JobPosting, scrape_job
 from src.resume_parser import ResumeProfile, parse_resume
-from src.scorer import _get_secrets, score_job
+from src.scorer import _get_secrets, score_job, score_job_with_gap
 
 logging.basicConfig(level=logging.INFO)
 
@@ -110,8 +111,44 @@ if not st.session_state.profile:
     st.stop()
 
 
-def _display_result(result: ClassificationResult, job_title: str, salary: str | None, company: str | None, source_url: str):
-    """Display classification results and save to history."""
+def _display_gap_analysis(gap: GapAnalysisResult):
+    """Render the gap analysis results."""
+    col_match, col_miss, col_bonus = st.columns(3)
+
+    with col_match:
+        st.markdown("#### Matched Skills")
+        for skill in gap.matched_skills:
+            st.markdown(f"**{skill.name}** ({skill.category})")
+            st.caption(skill.detail)
+
+    with col_miss:
+        st.markdown("#### Missing Skills")
+        for skill in gap.missing_skills:
+            st.markdown(f"**{skill.name}** ({skill.category})")
+            st.caption(skill.detail)
+
+    with col_bonus:
+        st.markdown("#### Bonus Skills")
+        for skill in gap.bonus_skills:
+            st.markdown(f"**{skill.name}** ({skill.category})")
+            st.caption(skill.detail)
+
+    st.info(gap.summary)
+
+    with st.expander("Recommendations to Close Gaps"):
+        for rec in gap.recommendations:
+            st.markdown(f"- {rec}")
+
+
+def _display_result(
+    result: ClassificationResult,
+    job_title: str,
+    salary: str | None,
+    company: str | None,
+    source_url: str,
+    gap: GapAnalysisResult | None = None,
+):
+    """Display classification results, optional gap analysis, and save to history."""
     COLORS = {1: "green", 2: "blue", 3: "orange", 4: "violet", 5: "red"}
     color = COLORS.get(result.category_id, "gray")
 
@@ -137,12 +174,19 @@ def _display_result(result: ClassificationResult, job_title: str, salary: str | 
     st.markdown(f"**Reasoning:** {result.reasoning}")
     st.markdown(f"**Next Step:** {result.suggested_action}")
 
+    # Gap analysis
+    if gap:
+        st.subheader("Gap Analysis")
+        _display_gap_analysis(gap)
+
     # Save to history
     entry = result.model_dump()
     entry["job_title"] = job_title or "Untitled"
     entry["salary"] = salary or ""
     entry["company"] = company or ""
     entry["source_url"] = source_url or ""
+    entry["gaps_missing"] = len(gap.missing_skills) if gap else 0
+    entry["gaps_matched"] = len(gap.matched_skills) if gap else 0
     st.session_state.history.append(entry)
 
 
@@ -184,16 +228,16 @@ with tab_url:
         with st.expander("Extracted Job Description"):
             st.text(posting.job_description[:2000])
 
-        with st.spinner("Classifying against your profile..."):
+        with st.spinner("Classifying and analyzing gaps..."):
             try:
-                result = score_job(
+                result, gap = score_job_with_gap(
                     resume_profile=st.session_state.profile,
                     job_description=posting.job_description,
                     secrets=secrets,
                     deployment_name=deployment,
                     use_identity=use_identity,
                 )
-                _display_result(result, posting.job_title, posting.salary, posting.company, job_url)
+                _display_result(result, posting.job_title, posting.salary, posting.company, job_url, gap=gap)
             except Exception as e:
                 st.error(f"Classification failed: {e}")
 
@@ -226,16 +270,16 @@ with tab_paste:
         )
 
     if st.button("Classify Job", type="primary", disabled=not job_text.strip()):
-        with st.spinner("Analyzing job against your profile..."):
+        with st.spinner("Classifying and analyzing gaps..."):
             try:
-                result = score_job(
+                result, gap = score_job_with_gap(
                     resume_profile=st.session_state.profile,
                     job_description=job_text,
                     secrets=st.session_state.secrets,
                     deployment_name=deployment,
                     use_identity=(auth_mode == "identity"),
                 )
-                _display_result(result, paste_title, paste_salary, paste_company, paste_url)
+                _display_result(result, paste_title, paste_salary, paste_company, paste_url, gap=gap)
             except Exception as e:
                 st.error(f"Classification failed: {e}")
 
@@ -332,14 +376,14 @@ with tab_search:
                 listing = st.session_state.search_results[idx]
                 with st.spinner(f"Classifying: {listing.title}..."):
                     try:
-                        result = score_job(
+                        result, gap = score_job_with_gap(
                             resume_profile=st.session_state.profile,
                             job_description=listing.description,
                             secrets=secrets,
                             deployment_name=deployment,
                             use_identity=use_identity,
                         )
-                        _display_result(result, listing.title, None, listing.company, listing.url)
+                        _display_result(result, listing.title, None, listing.company, listing.url, gap=gap)
                     except Exception as e:
                         st.error(f"Failed to classify '{listing.title}': {e}")
 
@@ -357,6 +401,8 @@ if st.session_state.history:
             "Category": f"{h['category_id']}. {h['category_name']}",
             "Confidence": h["confidence"],
             "Match %": h["skills_match_pct"],
+            "Matched": h.get("gaps_matched", "—"),
+            "Gaps": h.get("gaps_missing", "—"),
             "Action": h["suggested_action"],
         })
 
